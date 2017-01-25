@@ -28,6 +28,7 @@ alphabet_len = len(alphabet)
 
 data = numpy.zeros([len(raw_data), alphabet_len])
 
+# Katru simbolu datasetā aizstājam ar one-hot vektoru
 i = 0
 for ch in raw_data:
     one_hot = [0.0] * alphabet_len
@@ -42,39 +43,38 @@ lstm_layers = 2
 num_steps = 50
 
 
-# Nezināms batch size, pa chunk_size garuma gabaliņiem, ar alphabet garuma iespējamām vērtībām
-# encoder_inputs = tf.placeholder(tf.float32, [None, batch_size, len(alphabet)])
-# encoder_inputs = tf.placeholder(tf.float32, [batch_size, num_steps, alphabet_len])
-encoder_inputs = tf.placeholder(tf.float32, [None, None, alphabet_len])
-cell = tf.nn.rnn_cell.LSTMCell(num_units=lstm_size, state_is_tuple=False)
-lstm = tf.nn.rnn_cell.MultiRNNCell(lstm_layers * [cell], state_is_tuple=False)
+# last_state = lstm.zero_state(batch_size, dtype=tf.float32)
+last_state = numpy.zeros([lstm_layers*2*lstm_size])
+with tf.variable_scope("textgen"):
+    # encoder_inputs = tf.placeholder(tf.float32, [batch_size, num_steps, alphabet_len])
+    encoder_inputs = tf.placeholder(tf.float32, [None, None, alphabet_len])
+    cell = tf.nn.rnn_cell.LSTMCell(num_units=lstm_size)
+    lstm = tf.nn.rnn_cell.MultiRNNCell(lstm_layers * [cell])
 
-# cell.state_size :: LSTMStateTuple
-# => initial_state vajadzīgs tuple ar [batch_size, s] formas tenzoriem
-# https://github.com/tensorflow/tensorflow/blob/master/tensorflow/g3doc/api_docs/python/functions_and_classes/shard8/tf.nn.dynamic_rnn.md
-init_state = lstm.zero_state(batch_size, dtype=tf.float32)
-last_state = lstm.zero_state(batch_size, dtype=tf.float32)
+    # lstm.state_size :: LSTMStateTuple
+    # https://github.com/tensorflow/tensorflow/blob/master/tensorflow/g3doc/api_docs/python/functions_and_classes/shard8/tf.nn.dynamic_rnn.md
+    init_state = lstm.zero_state(batch_size, dtype=tf.float32)
 
-encoder_outputs, encoder_state = tf.nn.dynamic_rnn(lstm, encoder_inputs, initial_state=init_state)
+    encoder_outputs, encoder_state = tf.nn.dynamic_rnn(lstm, encoder_inputs, initial_state=init_state)
 
-# decoder_inputs = [encoder_outputs]
-# decoder_outputs, decoder_state = tf.nn.seq2seq.rnn_decoder(decoder_inputs, encoder_state, lstm)
+    # decoder_inputs = [encoder_outputs]
+    # decoder_outputs, decoder_state = tf.nn.seq2seq.rnn_decoder(decoder_inputs, encoder_state, lstm)
 
-out_W = tf.Variable(tf.random_normal([lstm_size, alphabet_len], stddev=0.01))
-out_B = tf.Variable(tf.random_normal([alphabet_len], stddev=0.01))
+    out_W = tf.Variable(tf.random_normal([lstm_size, alphabet_len], stddev=0.01))
+    out_B = tf.Variable(tf.random_normal([alphabet_len], stddev=0.01))
 
-shaped_outputs = tf.reshape(encoder_outputs, [-1, lstm_size])
-raw_output = (tf.matmul(shaped_outputs, out_W) + out_B)
+    shaped_outputs = tf.reshape(encoder_outputs, [-1, lstm_size])
+    raw_output = (tf.matmul(shaped_outputs, out_W) + out_B)
 
-batch_time_shape = tf.shape(encoder_outputs)
-output = tf.reshape(tf.nn.softmax(raw_output), (batch_time_shape[0], batch_time_shape[1], alphabet_len))
+    batch_time_shape = tf.shape(encoder_outputs)
+    output = tf.reshape(tf.nn.softmax(raw_output), (batch_time_shape[0], batch_time_shape[1], alphabet_len))
 
-gold = tf.placeholder(tf.float32, [None, None, alphabet_len])
-shaped_gold = tf.reshape(gold, [-1, alphabet_len])
+    gold = tf.placeholder(tf.float32, [None, None, alphabet_len])
+    shaped_gold = tf.reshape(gold, [-1, alphabet_len])
 
-alpha = 0.03 # Learning rate
-cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(raw_output,shaped_gold))
-train_step = tf.train.AdadeltaOptimizer(alpha).minimize(cross_entropy)
+    alpha = 0.03 # Learning rate
+    cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(raw_output,shaped_gold))
+    train_step = tf.train.AdadeltaOptimizer(alpha).minimize(cross_entropy)
 
 
 init = tf.initialize_all_variables()
@@ -83,7 +83,7 @@ sess.run(init)
 saver = tf.train.Saver()
 
 if mode == 'train':
-    iterations = 3000
+    iterations = 500
     if restore_for_training:
         saver.restore(sess, savefile)
 
@@ -122,7 +122,7 @@ else: #test
 
         feed_data = [rdata]
         init = numpy.zeros([lstm_layers*2*lstm_size])
-        out, next_state = sess.run([output, encoder_state], feed_dict={encoder_inputs:feed_data, init_state:[init]})
+        out, next_state = sess.run([output, encoder_state], feed_dict={encoder_inputs:feed_data, init_state:init})
         last_state = next_state[0]
 
     generated = root
@@ -136,7 +136,7 @@ else: #test
 
         feed_data = [rdata]
         init = last_state
-        out, next_state = sess.run([output, encoder_state], feed_dict={encoder_inputs:feed_data, init_state:[init]})
+        out, next_state = sess.run([output, encoder_state], feed_dict={encoder_inputs:feed_data, init_state:init})
         last_state = next_state[0]
     
     print(generated)
